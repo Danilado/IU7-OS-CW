@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:fitsSystemWindows="false">
+
+    <!-- MAC address input -->
+    <EditText
+        android:id="@+id/macInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="MAC address (00:11:22:33:44:55)"
+        android:inputType="text"
+        android:padding="12dp"
+        android:textSize="18sp"
+        android:singleLine="true"
+        android:background="@android:drawable/edit_text"
+        />
+
+    <!-- Touchpad area -->
+    <FrameLayout
+        android:id="@+id/touchpad"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="12dp"
+        android:background="#DDDDDD" />
+
+    <!-- Mouse buttons -->
+    <LinearLayout
+        android:id="@+id/buttonsBar"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="12dp">
+
+        <Button
+            android:id="@+id/btnLeft"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:text="ЛКМ"
+            android:textSize="18sp"/>
+
+        <Button
+            android:id="@+id/btnRight"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_marginLeft="12dp"
+            android:layout_weight="1"
+            android:text="ПКМ"
+            android:textSize="18sp"/>
+
+    </LinearLayout>
+
+</LinearLayout>
