@@ -1,0 +1,38 @@
+\documentclass[utf8x, a4paper, 12pt, oneside]{extarticle}
+
+\input{parts/00-config}
+
+\begin{document}
+
+\includepdf[pages={1,2}]{parts/title}
+
+\include{parts/01-abstract}
+
+\begingroup
+  \renewcommand{\addvspace}[1]{}% убрать вертикальные отступы внутри оглавления
+  \renewcommand{\contentsname}{\begin{center}СОДЕРЖАНИЕ\end{center}}
+  \tableofcontents
+\endgroup
+
+\include{parts/02-definitions}
+
+\include{parts/03-intro}
+
+
+\include{parts/04-analytic}
+
+\include{parts/05-constructor}
+
+\include{parts/06-tech}
+
+\include{parts/07-research}
+
+\include{parts/08-conclusion}
+
+\sssr{СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ}
+
+\printbibliography[heading=none]
+
+\include{parts/99-appendix}
+
+\end{document}

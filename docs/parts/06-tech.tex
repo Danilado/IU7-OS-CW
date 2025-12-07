@@ -1,0 +1,519 @@
+\section{Технологический раздел}
+
+\subsection{Выбор языка и среды программирования}
+
+Загружаемый модуль ядра реализован на языке программирования C. 
+Ядро Linux и большинство драйверов и загружаемых модулей традиционно реализуются на C, а интерфейсы ядровых API, включая подсистему ввода, работу с сокетами и потоками, определяются в терминах C-структур и функций~\cite{c-lang-docs,linux-driver-basics,linux-input-docs}. 
+Язык C предоставляет контроль над управлением памятью, представлением структур данных и взаимодействием с заголовочными файлами ядра, а также поддерживается стандартным инструментарием сборки модулей ядра на основе подсистемы Kbuild~\cite{linux-driver-basics}.
+Таким образом, язык программирования C является достаточным для реализации драйвера.
+
+Сборка модуля ядра выполняется с использованием стандартной инфраструктуры сборки ядра Linux и утилиты \texttt{make}. Для интеграции с подсистемой Kbuild используется конфигурационный файл \texttt{Makefile}, в котором описаны цели сборки, имя модуля и перечень исходных файлов~\cite{linux-driver-basics}.
+
+Мобильное приложение разработано на языке Kotlin.
+Этот язык официально поддерживается в экосистеме Android и интегрирован с Android Studio и системой сборки Gradle, что обеспечивает доступ к Android SDK и библиотекам платформы, включая API Bluetooth~\cite{kotlin-site,android-bt-connect}. 
+Совместимость с Java-API позволяет использовать классы \lstinline|BluetoothAdapter|, \lstinline|BluetoothDevice| и \lstinline|BluetoothSocket| непосредственно из Kotlin-кода~\cite{android-bt-connect,BluetoothSocket-doc}.
+Таким образом, Kotlin обладает достаточными возможностями для реализации клиентского приложения, а также поддержания связи с модулем ядра на целевом устройстве.
+
+% Выбор C для модуля ядра и Kotlin для мобильного приложения обеспечивает использование низкоуровневых интерфейсов ядра Linux на стороне драйвера и высокоуровневого SDK на стороне Android-приложения, что соответствует постановке задачи по разработке загружаемого модуля и сопряжённого клиента~\cite{linux-driver-basics,android-bt-connect}.
+
+\subsection{Реализация загружаемого модуля ядра Linux}
+
+\subsubsection*{Структуры данных и состояние драйвера}
+
+Загружаемый модуль ядра хранит состояние виртуального устройства мыши и параметры протокола обмена в собственных структурах данных. Основой для интеграции с подсистемой ввода является структура \lstinline|struct input_dev| (представлена в листинге~\ref{lst:input_dev}), которая содержит идентификаторы устройства, указатели на функции обратного вызова и описания поддерживаемых типов и кодов событий~\cite{linux-input-docs,input-programming}. Дополнительно используются структуры для хранения текущих состояний кнопок и параметров RFCOMM-соединения.
+Фрагмент объявления структур данных драйвера приведён в листинге~\ref{lst:definitions}.
+
+\begin{lstlisting}[language=C,caption={Структура \texttt{input\_dev}},label={lst:input_dev}]
+	struct input_dev {
+		const char * name;
+		const char * phys;
+		const char * uniq;
+		struct input_id id;
+		unsigned long propbit;
+		unsigned long evbit;
+		unsigned long keybit;
+		unsigned long relbit;
+		unsigned long absbit;
+		unsigned long mscbit;
+		unsigned long ledbit;
+		unsigned long sndbit;
+		unsigned long ffbit;
+		unsigned long swbit;
+		unsigned int hint_events_per_packet;
+		unsigned int keycodemax;
+		unsigned int keycodesize;
+		void * keycode;
+		int (* setkeycode) (struct input_dev *dev,const struct input_keymap_entry *ke, unsigned int *old_keycode);
+		int (* getkeycode) (struct input_dev *dev, struct input_keymap_entry *ke);
+		struct ff_device * ff;
+		unsigned int repeat_key;
+		struct timer_list timer;
+		int rep;
+		struct input_mt * mt;
+		struct input_absinfo * absinfo;
+		unsigned long key;
+		unsigned long led;
+		unsigned long snd;
+		unsigned long sw;
+		int (* open) (struct input_dev *dev);
+		void (* close) (struct input_dev *dev);
+		int (* flush) (struct input_dev *dev, struct file *file);
+		int (* event) (struct input_dev *dev, unsigned int type, unsigned int code, int value);
+		struct input_handle __rcu * grab;
+		spinlock_t event_lock;
+		struct mutex mutex;
+		unsigned int users;
+		bool going_away;
+		struct device dev;
+		struct list_head h_list;
+		struct list_head node;
+		unsigned int num_vals;
+		unsigned int max_vals;
+		struct input_value * vals;
+		bool devres_managed;
+	};
+\end{lstlisting}
+
+\begin{lstlisting}[language=C,caption={Фрагмент объявления структур данных драйвера \texttt{phone\_mouse\_bt}},label={lst:definitions}]
+	/* Виртуальное устройство мыши в подсистеме input */
+	static struct input_dev *pm_input_dev;
+	
+	/* RFCOMM-сокеты для ожидания и обслуживания соединения */
+	static struct socket *listen_sock;
+	static struct socket *client_sock;
+	
+	/* Служебный поток приёма пакетов от телефона */
+	static struct task_struct *rx_thread;
+	
+	/* Параметры обработки движения */
+	static int interp_steps = 0;   /* число шагов интерполяции движения */
+	static int speed_mult;         /* коэффициент скорости в формате Q16.16 */
+	
+	/* Маски кнопок в протокольном байте buttons */
+	#define LMB_MASK 0x01
+	#define RMB_MASK 0x02
+\end{lstlisting}
+
+\subsubsection*{Точки входа модуля и функции обработки}
+
+Точки входа загружаемого модуля определяются функциями инициализации и завершения, регистрируемыми макросами \lstinline|module_init| и \lstinline|module_exit|~\cite{linux-driver-basics}. В функции инициализации выполняются:
+\begin{itemize}
+	\item создание и настройка объекта \lstinline|struct input_dev| и регистрация виртуального устройства мыши в подсистеме ввода;
+	\item инициализация структур данных состояния драйвера;
+	\item создание серверного RFCOMM-сокета и его привязка к выбранному каналу;
+	\item запуск служебного потока ядра с помощью \lstinline|kthread_run| для обработки соединения и входящих команд~\cite{linux-kthread-man,linux-rfcomm-core}.
+\end{itemize}
+
+Функция завершения выполняет остановку служебного потока, закрытие RFCOMM-сокета, снятие виртуального устройства с регистрации и освобождение всех выделенных ресурсов~\cite{linux-driver-basics}.
+
+Функции инициализации и завершения драйвера модуля приведены в листингах~\ref{lst:init}~и~\ref{lst:exit} соответственно.
+
+\begin{lstlisting}[language=C,caption={Функция инициализации модуля},label={lst:init}]
+	static int __init pm_init(void) {
+		int err;
+		struct sockaddr_rc addr = {0};
+		
+		if (interp_steps < 0) {
+			pr_err("phone_mouse_bt: ERROR: interp_steps must be >= 0 (got %d)\n",
+			interp_steps);
+			return -EINVAL;
+		}
+		
+		speed_mult = (speed_pct * 65536) / 100;
+		pr_info("phone_mouse_bt: speed coefficient = %d (Q16.16)\n", speed_mult);
+		
+		// Allocate new input device
+		pm_input_dev = input_allocate_device();
+		if (!pm_input_dev)
+		return -ENOMEM;
+		
+		pm_input_dev->name = "Bluetooth Phone Mouse";
+		pm_input_dev->id.bustype = BUS_BLUETOOTH;
+		
+		__set_bit(EV_KEY, pm_input_dev->evbit);
+		__set_bit(EV_REL, pm_input_dev->evbit);
+		
+		__set_bit(BTN_LEFT, pm_input_dev->keybit);
+		__set_bit(BTN_RIGHT, pm_input_dev->keybit);
+		
+		__set_bit(REL_X, pm_input_dev->relbit);
+		__set_bit(REL_Y, pm_input_dev->relbit);
+		
+		err = input_register_device(pm_input_dev);
+		if (err)
+		return err;
+		
+		// RFCOMM socket
+		err = sock_create_kern(&init_net, PF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM,
+		&listen_sock);
+		if (err < 0) {
+			pr_err("phone_mouse: sock_create_kern failed\n");
+			return err;
+		}
+		
+		addr.rc_family = AF_BLUETOOTH;
+		bacpy(&addr.rc_bdaddr, BDADDR_ANY);
+		addr.rc_channel = bt_listen_channel;
+		
+		err = listen_sock->ops->bind(listen_sock, (struct sockaddr *)&addr,
+		sizeof(addr));
+		if (err < 0) {
+			pr_err("phone_mouse: bind failed\n");
+			return err;
+		}
+		
+		err = listen_sock->ops->listen(listen_sock, 1);
+		if (err < 0) {
+			pr_err("phone_mouse: listen failed\n");
+			return err;
+		}
+		
+		// Main loop in kernel thread
+		rx_thread = kthread_run(rx_loop, NULL, "phone_mouse_rx");
+		if (IS_ERR(rx_thread)) {
+			pr_err("phone_mouse: failed to start thread\n");
+			return PTR_ERR(rx_thread);
+		}
+		
+		pr_info("phone_mouse: module loaded, listening RFCOMM channel %d\n",
+		bt_listen_channel);
+		
+		return 0;
+	}
+\end{lstlisting}
+
+\begin{lstlisting}[language=C,caption={Функция завершения модуля},label={lst:exit}]
+	static void __exit pm_exit(void) {
+		if (rx_thread)
+		kthread_stop(rx_thread);
+		
+		if (client_sock)
+		sock_release(client_sock);
+		
+		if (listen_sock)
+		sock_release(listen_sock);
+		
+		input_unregister_device(pm_input_dev);
+		
+		pr_info("phone_mouse: unloaded\n");
+	}
+\end{lstlisting}
+
+Служебный поток \lstinline|rx_loop| реализует цикл приёма данных из RFCOMM-сокета: при отсутствии активного клиента поток ожидает входящего соединения, после установления соединения периодически читает из сокета фиксированный пакет длиной пять байт, обрабатывает ситуации временного отсутствия данных и разрыва соединения и, для корректных пакетов, передаёт первый байт в функцию \lstinline|handle_buttons|, а четыре следующих байта --- в функцию \lstinline|handle_movement|. Функция \lstinline|handle_buttons| на основе битовой маски кнопок порождает события \lstinline|EV_KEY|, а функция \lstinline|handle_movement| декодирует смещения по осям, масштабирует их и генерирует соответствующие события \lstinline|EV_REL| с последующим вызовом \lstinline|input_sync|~\cite{linux-input-docs,input-programming,bluetooth-core-spec,bluez-rfcomm-wiki}.
+
+
+\begin{lstlisting}[language=C,caption={Функция служебного потока приёма пакетов по RFCOMM}]
+	static int rx_loop(void *data) {
+		struct msghdr msg = {0};
+		struct kvec vec;
+		u8 buf[5];
+		
+		while (!kthread_should_stop()) {
+			
+			if (!client_sock) {
+				/* Ждём подключения */
+				struct socket *new_sock = NULL;
+				int r = kernel_accept(listen_sock, &new_sock, 0);
+				if (r == 0) {
+					client_sock = new_sock;
+					pr_info("phone_mouse: client connected!\n");
+				} else {
+					ssleep(1);
+					continue;
+				}
+			}
+			
+			vec.iov_base = buf;
+			vec.iov_len = sizeof(buf);
+			
+			int len =
+			kernel_recvmsg(client_sock, &msg, &vec, 1, sizeof(buf), MSG_DONTWAIT);
+			
+			if (len == -EAGAIN) {
+				msleep(5);
+				continue;
+			}
+			if (len <= 0) {
+				pr_info("phone_mouse: client disconnected\n");
+				sock_release(client_sock);
+				client_sock = NULL;
+				continue;
+			}
+			if (len < 5)
+			continue;
+			
+			handle_buttons(buf[0]);
+			
+			handle_movement(&buf[1]);
+		}
+		
+		return 0;
+	}
+\end{lstlisting}
+
+\begin{lstlisting}[language=C,caption={Функция обработки нажатия кнопки}]
+	#define LMB_MASK 0b00000001
+	#define RMB_MASK 0b00000010
+	static void handle_buttons(u8 buttons) {
+		if (buttons & LMB_MASK) {
+			input_report_key(pm_input_dev, BTN_LEFT, 1);
+			input_sync(pm_input_dev);
+			input_report_key(pm_input_dev, BTN_LEFT, 0);
+			input_sync(pm_input_dev);
+		}
+		
+		if (buttons & RMB_MASK) {
+			input_report_key(pm_input_dev, BTN_RIGHT, 1);
+			input_sync(pm_input_dev);
+			input_report_key(pm_input_dev, BTN_RIGHT, 0);
+			input_sync(pm_input_dev);
+		}
+	}
+\end{lstlisting}
+
+\begin{lstlisting}[language=C,caption={Функция обработки движения курсора}]
+	static void handle_movement(u8 buf[4]) {
+		s16 dx = (s16)((buf[0] << 8) | buf[1]);
+		s16 dy = (s16)((buf[2] << 8) | buf[3]);
+		
+		dx = (dx * speed_mult) >> 16;
+		dy = (dy * speed_mult) >> 16;
+		
+		if (interp_steps > 0) {
+			int step_dx = dx / interp_steps;
+			int step_dy = dy / interp_steps;
+			
+			int i;
+			for (i = 0; i < interp_steps; i++) {
+				input_report_rel(pm_input_dev, REL_X, step_dx);
+				input_report_rel(pm_input_dev, REL_Y, step_dy);
+				input_sync(pm_input_dev);
+			}
+			
+			return;
+		}
+		
+		input_report_rel(pm_input_dev, REL_X, dx);
+		input_report_rel(pm_input_dev, REL_Y, dy);
+		
+		input_sync(pm_input_dev);
+	}
+\end{lstlisting}
+
+\subsubsection*{Сборка модуля ядра}
+
+Сборка модуля ядра выполняется внешней по отношению к дереву исходных текстов ядра командой \texttt{make} с использованием файла \texttt{Makefile}, описывающего цель сборки и исходные файлы. В \texttt{Makefile} используются переменные и правила Kbuild, что позволяет компилировать модуль в соответствии с конфигурацией ядра и подключать необходимые заголовочные файлы~\cite{linux-driver-basics}.
+
+\begin{lstlisting}[language=make,caption={Фрагмент файла Makefile для сборки модуля ядра}]
+	obj-m += phone_mouse_bt.o
+
+	KDIR := /lib/modules/$(shell uname -r)/build
+	
+	PWD  := $(shell pwd)
+	
+	all:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	
+	clean:
+	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	
+\end{lstlisting}
+
+\subsection{Реализация мобильного приложения для Android}
+
+\subsubsection*{Основные компоненты приложения}
+
+Мобильное приложение реализовано в виде Android-приложения с основной активностью, отвечающей за инициализацию пользовательского интерфейса, установление Bluetooth-соединения и обработку входных событий. Логика обработки касаний и генерации команд размещается в коде активности и связанных с ней обработчиков событий, а обмен данными по Bluetooth --- в отдельном компоненте, использующем объект \lstinline|BluetoothSocket|~\cite{android-bt-connect,BluetoothSocket-doc}.
+
+\begin{lstlisting}[language=c,caption={Фрагмент основной активности Android-приложения}]
+	class MainActivity : AppCompatActivity() {
+		
+		private val prefs by lazy { getSharedPreferences("btmouse", MODE_PRIVATE) }
+		
+		private var socket: BluetoothSocket? = null
+		private var output: OutputStream? = null
+		
+		private var lastX = 0f
+		private var lastY = 0f
+		private var firstMove = true
+		
+		private var pendingDx = 0
+		private var pendingDy = 0
+		private val MOVE_INTERVAL_MS = 15L
+		
+		@Volatile private var moveSenderRunning = true
+		
+		private val btPermissions = arrayOf(
+		Manifest.permission.BLUETOOTH_CONNECT,
+		Manifest.permission.BLUETOOTH_SCAN
+		)
+		
+		override fun onCreate(savedInstanceState: Bundle?) {
+			super.onCreate(savedInstanceState)
+			setContentView(R.layout.activity_main)
+			
+			// Фоновый поток отправки накопленных смещений курсора
+			thread {
+				while (moveSenderRunning) {
+					Thread.sleep(MOVE_INTERVAL_MS)
+					
+					val dx: Int
+					val dy: Int
+					
+					synchronized(this) {
+						dx = pendingDx
+						dy = pendingDy
+						pendingDx = 0
+						pendingDy = 0
+					}
+					
+					if (dx != 0 || dy != 0) {
+						sendPacket(dx, dy, 0)
+					}
+				}
+			}
+			
+			// Поиск представлений интерфейса
+			val touchpad = findViewById<View>(R.id.touchpad)
+			val macInput = findViewById<EditText>(R.id.macInput)
+			val btnLeft = findViewById<Button>(R.id.btnLeft)
+			val btnRight = findViewById<Button>(R.id.btnRight)
+			
+			// Восстановление сохранённого MAC-адреса
+			macInput.setText(prefs.getString("mac", ""))
+			
+			if (!hasPermissions()) {
+				permissionLauncher.launch(btPermissions)
+			}
+			
+			// Подключение при вводе нового MAC-адреса
+			macInput.setOnEditorActionListener { _, _, _ ->
+				val mac = macInput.text.toString().trim()
+				prefs.edit().putString("mac", mac).apply()
+				connectToPc(mac)
+				true
+			}
+			
+			// Обработчики нажатий кнопок мыши
+			btnLeft.setOnClickListener {
+				sendPacket(0, 0, 1) // левый клик
+			}
+			btnRight.setOnClickListener {
+				sendPacket(0, 0, 2) // правый клик
+			}
+			
+			// Обработка движения по сенсорной области
+			touchpad.setOnTouchListener { _, ev ->
+				handleTouch(ev)
+				true
+			}
+			
+			// Автоматическое подключение при сохранённом MAC
+			val savedMac = prefs.getString("mac", "")
+			if (!savedMac.isNullOrEmpty()) {
+				connectToPc(savedMac)
+			}
+		}
+		
+		// ...
+	}
+\end{lstlisting}
+
+
+\subsubsection*{Работа с Bluetooth-API Android}
+
+Для установления RFCOMM-соединения приложение использует \lstinline|BluetoothAdapter| для доступа к локальному Bluetooth-модулю, \lstinline|BluetoothDevice| для представления удалённого устройства рабочей станции и \lstinline|BluetoothSocket| для установления и использования сокетного соединения~\cite{android-bt-connect,BluetoothSocket-doc}. Соединение создаётся методом \lstinline|createRfcommSocketToServiceRecord| с использованием согласованного UUID сервиса, после чего приложение выполняет операцию подключения и получает потоки ввода-вывода для обмена бинарными сообщениями.
+
+\begin{lstlisting}[language=c,caption={Фрагмент работы с BluetoothAdapter и BluetoothSocket}]
+private fun hasPermissions(): Boolean =
+btPermissions.all {
+	ContextCompat.checkSelfPermission(this, it) ==
+	PackageManager.PERMISSION_GRANTED
+}
+
+private fun connectToPc(mac: String) {
+	if (mac.length < 17) {
+		Toast.makeText(this, "Invalid MAC", Toast.LENGTH_SHORT).show()
+		return
+	}
+	
+	val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+	
+	try {
+		val device: BluetoothDevice = adapter.getRemoteDevice(mac)
+		
+		// Подключение к ПК во внутреннем потоке
+		thread {
+			try {
+				// RFCOMM channel 1 (драйвер слушает на этом канале)
+				val method = device.javaClass.getMethod(
+				"createRfcommSocket",
+				Int::class.javaPrimitiveType
+				)
+				val sock = method.invoke(device, 1) as BluetoothSocket
+				
+				adapter.cancelDiscovery()
+				sock.connect()
+				
+				socket = sock
+				output = sock.outputStream
+				
+				runOnUiThread {
+					Toast.makeText(
+					this,
+					"Connected to $mac",
+					Toast.LENGTH_SHORT
+					).show()
+				}
+			} catch (e: Exception) {
+				e.printStackTrace()
+				runOnUiThread {
+					Toast.makeText(
+					this,
+					"Connect err: ${e.message}",
+					Toast.LENGTH_LONG
+					).show()
+				}
+			}
+		}
+	} catch (e: Exception) {
+		e.printStackTrace()
+		Toast.makeText(
+		this,
+		"MAC error: ${e.message}",
+		Toast.LENGTH_LONG
+		).show()
+	}
+}
+\end{lstlisting}
+
+Код обработки сенсорных событий в пользовательском интерфейсе преобразует координаты касаний и состояния элементов управления в смещения по осям и битовую маску состояний кнопок мыши, после чего упаковывает их в бинарный формат протокола и передаёт через \lstinline|BluetoothSocket| в модуль ядра~\cite{android-bt-connect,BluetoothSocket-doc}.
+
+\subsubsection*{Конфигурация проекта и разрешения}
+
+Конфигурация Android-приложения включает файл \texttt{AndroidManifest.xml}, в котором описываются разрешения на использование Bluetooth и, при необходимости, дополнительные особенности аппаратной платформы. В манифесте объявляется основная активность приложения и настраиваются параметры, связанные с версией SDK и требованиями к окружению~\cite{android-bt-connect}.
+
+\begin{lstlisting}[language=XML,caption={Фрагмент файла AndroidManifest.xml с разрешениями Bluetooth}]
+<!-- Разрешения Bluetooth для Android 12+ и Android 15 -->
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+<application
+	android:allowBackup="true"
+	android:label="PhoneMouse"
+	android:supportsRtl="true"
+	android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+	
+	<activity
+		android:name=".MainActivity"
+		android:exported="true">
+		
+		<intent-filter>
+			<action android:name="android.intent.action.MAIN"/>
+			<category android:name="android.intent.category.LAUNCHER"/>
+		</intent-filter>
+	
+	</activity>
+</application>
+\end{lstlisting}
