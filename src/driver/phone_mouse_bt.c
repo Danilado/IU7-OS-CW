@@ -86,7 +86,7 @@ static int rx_loop(void *data) {
   while (!kthread_should_stop()) {
 
     if (!client_sock) {
-      /* Ждём подключения */
+      // wait for connection
       struct socket *new_sock = NULL;
       int r = kernel_accept(listen_sock, &new_sock, 0);
       if (r == 0) {
