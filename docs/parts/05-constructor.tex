@@ -18,35 +18,20 @@
 \end{figure}
 \clearpage
 
-\subsection{Базовые структуры и точки входа драйвера}
+\
 
-Загружаемый модуль ядра использует следующие точки входа~\cite{linux-driver-basics}:
-\begin{itemize}
-	\item функцию инициализации, регистрируемую через макрос \lstinline|module_init|, выполняющую создание виртуального устройства ввода, настройку RFCOMM-сокета и запуск служебного потока;
-	\item функцию завершения, регистрируемую через макрос \lstinline|module_exit|, выполняющую остановку служебного потока, закрытие RFCOMM-сокета и снятие виртуального устройства с регистрации в подсистеме ввода;
-	\item функцию служебного потока обработки соединения, создаваемого с помощью \lstinline|kthread_run| и выполняющего цикл приёма команд по RFCOMM и генерацию событий ввода~\cite{linux-kthread-man}.
-\end{itemize}
-
-Для интеграции с подсистемой ввода используется структура \lstinline|struct input_dev|, в которой настраиваются:
-\begin{itemize}
-	\item поддерживаемые типы событий \lstinline|EV_REL| и \lstinline|EV_KEY|;
-	\item коды событий \lstinline|REL_X|, \lstinline|REL_Y|, \lstinline|BTN_LEFT|, \lstinline|BTN_RIGHT|;
-	\item идентификаторы производителя, продукта и человекочитаемое имя устройства~\cite{linux-input-docs,input-programming}.
-\end{itemize}
-Генерация событий выполняется вызовами \lstinline|input_report_rel|, \lstinline|input_report_key| и \lstinline|input_sync| для зарегистрированного устройства~\cite{linux-input-docs}.
-
-Для взаимодействия с RFCOMM создаётся серверный Bluetooth-сокет с семейством \lstinline|PF_BLUETOOTH| и протоколом \lstinline|BTPROTO_RFCOMM|. Адрес сокета задаётся структурой адреса с полями семейства адресов, Bluetooth-адреса устройства и номера RFCOMM-канала, после чего выполняются операции привязки и перевода сокета в режим прослушивания~\cite{bluetooth-core-spec,kernel-net-kapi,linux-rfcomm-core}.
-
-\subsection{Последовательность работы модуля ядра}
+\textit{Части модуля ядра}
 
 Работа модуля ядра логически разделяется на три этапа: инициализацию, обслуживание соединения и завершение работы.
 
-На этапе инициализации выполняются проверка параметров, регистрация виртуального устройства ввода в подсистеме input, создание и настройка серверного RFCOMM-сокета и запуск служебного потока обработки соединения. Последовательность действий функции инициализации представлена на рис.~\ref{fig:module-load-scheme}.
+На этапе инициализации выполняются проверка параметров, регистрация виртуального устройства ввода в подсистеме input, создание и настройка серверного RFCOMM-сокета и запуск служебного потока обработки соединения. 
+
+Алгоритм регистрации серверного RFCOMM-сокета представлен на рис.~\ref{fig:module-load-scheme}.
 
 \begin{figure}[h!]
 	\centering
-	\includegraphics[width=0.95\textwidth]{module_load_scheme.drawio.png}
-	\caption{Схема алгоритма инициализации модуля ядра \texttt{phone\_mouse\_bt}}
+	\includegraphics[width=0.95\textwidth]{handler.pdf}
+	\caption{Алгоритм регистрации RFCOMM сервера}
 	\label{fig:module-load-scheme}
 \end{figure}
 \clearpage
@@ -55,17 +40,17 @@
 \begin{figure}[h!]
 	\centering
 	\includegraphics[height=0.7\textheight]{rx-loop.pdf}
-	\caption{Схема алгоритма работы служебного потока \texttt{rx\_loop}}
+	\caption{Алгоритм работы служебного потока \texttt{rx\_loop}}
 	\label{fig:rx-loop-scheme}
 \end{figure}
 \clearpage
 
-Обработка состояний кнопок мыши вынесена в отдельную функцию \lstinline|handle_buttons|. Эта функция декодирует битовую маску нажатых кнопок и порождает для каждой активной кнопки последовательность событий нажатия и отпускания с вызовами \lstinline|input_report_key| и \lstinline|input_sync|, формируя короткие клики левой и правой кнопок мыши. Схема алгоритма \lstinline|handle_buttons| приведена на рис.~\ref{fig:handle-buttons-scheme}.
+Обработка состояний кнопок мыши вынесена в отдельную функцию \lstinline|handle_buttons|. Эта функция декодирует битовую маску нажатых кнопок и порождает для каждой активной кнопки последовательность событий нажатия и отпускания с вызовами \lstinline|input_report_key| и \lstinline|input_sync|, формируя короткие клики левой и правой кнопок мыши. Алгоритм \lstinline|handle_buttons| приведена на рис.~\ref{fig:handle-buttons-scheme}.
 
 \begin{figure}[h!]
 	\centering
 	\includegraphics[height=0.7\textheight]{handle_buttons.pdf}
-	\caption{Схема алгоритма обработки нажатий кнопок мыши \lstinline|handle_buttons|}
+	\caption{Алгоритм имитации щелчков мыши \lstinline|handle_buttons|}
 	\label{fig:handle-buttons-scheme}
 \end{figure}
 \clearpage
@@ -76,29 +61,28 @@
 \begin{figure}[h!]
 	\centering
 	\includegraphics[width=0.7\textwidth]{handle_movement.pdf}
-	\caption{Схема алгоритма обработки движения курсора \lstinline|handle_movement|}
+	\caption{Алгоритм обработки движения курсора \lstinline|handle_movement|}
 	\label{fig:handle-movement-scheme}
 \end{figure}
-\clearpage
 
 Завершение работы модуля включает остановку служебного потока, закрытие клиентского и серверного RFCOMM-сокетов, снятие виртуального устройства с регистрации и освобождение ресурсов. Последовательность действий функции \lstinline|pm_exit|, зарегистрированной через \lstinline|module_exit|, приведена на рис.~\ref{fig:module-exit-scheme}~\cite{linux-driver-basics,linux-input-docs}.
 
 \begin{figure}[h!]
 	\centering
 	\includegraphics[height=0.7\textheight]{module-exit-scheme.pdf}
-	\caption{Схема алгоритма завершения работы модуля ядра \texttt{phone\_mouse\_bt}}
+	\caption{Алгоритм завершения работы модуля ядра \texttt{phone\_mouse\_bt}}
 	\label{fig:module-exit-scheme}
 \end{figure}
 \clearpage
 
-\subsection{Последовательность работы мобильного приложения}
+\textit{Части мобильного приложения}
 
-Мобильное приложение реализовано в виде т. н. "Android-активности" (Activity), которая инициализирует пользовательский интерфейс, запускает фоновый поток отправки накопленных смещений курсора, устанавливает Bluetooth-соединение с рабочей станцией и обрабатывает события сенсорного экрана и нажатия кнопок мыши~\cite{android-bt-connect,BluetoothSocket-doc}. Общая последовательность работы основной активности \lstinline|MainActivity| представлена на рис.~\ref{fig:app-main-activity}: при создании активности выполняется настройка интерфейса, запуск фонового потока отправки движения, восстановление сохранённого MAC-адреса, установка обработчиков для поля ввода MAC-адреса, кнопок мыши и области touchpad, а также, при наличии сохранённого адреса, инициируется подключение к рабочей станции.
+Мобильное приложение реализовано в виде т. н. "Android-активности" (Activity), которая инициализирует пользовательский интерфейс, запускает фоновый поток отправки накопленных смещений курсора, устанавливает Bluetooth-соединение с рабочей станцией и обрабатывает события сенсорного экрана и нажатия кнопок мыши~\cite{android-bt-connect,BluetoothSocket-doc}. Общая последовательность работы основной активности \lstinline|MainActivity| представлена на рис.~\ref{fig:app-main-activity}: при создании активности выполняется настройка интерфейса, запуск фонового потока отправки движений, восстановление сохранённого MAC-адреса, установка обработчиков для поля ввода MAC-адреса, кнопок мыши и области touchpad, а также, при наличии сохранённого адреса, инициируется подключение к рабочей станции.
 
 \begin{figure}[h!]
 	\centering
 	\includegraphics[width=0.9\textwidth]{AppMainActivity.pdf}
-	\caption{Схема алгоритма работы основной активности мобильного приложения}
+	\caption{Алгоритм работы основной активности мобильного приложения}
 	\label{fig:app-main-activity}
 \end{figure}
 \clearpage
@@ -108,7 +92,7 @@
 \begin{figure}[h!]
 	\centering
 	\includegraphics[height=0.7\textheight]{SendPacketThread.pdf}
-	\caption{Схема алгоритма фонового потока отправки накопленных смещений}
+	\caption{Алгоритм фонового потока отправки накопленных смещений}
 	\label{fig:sendpacket-thread}
 \end{figure}
 \clearpage
@@ -118,7 +102,7 @@
 \begin{figure}[h!]
 	\centering
 	\includegraphics[width=0.8\textwidth]{SendPacket.pdf}
-	\caption{Схема алгоритма формирования и отправки пакета команд \lstinline|sendPacket|}
+	\caption{Алгоритм формирования и отправки пакета команд \lstinline|sendPacket|}
 	\label{fig:sendpacket-func}
 \end{figure}
 \clearpage
@@ -128,7 +112,7 @@
 \begin{figure}[h!]
 	\centering
 	\includegraphics[height=0.7\textheight]{ConnectToPc.pdf}
-	\caption{Схема алгоритма функции подключения к рабочей станции \lstinline|connectToPc|}
+	\caption{Алгоритм подключения к рабочей станции \lstinline|connectToPc|}
 	\label{fig:connect-to-pc}
 \end{figure}
 \clearpage
@@ -136,28 +120,30 @@
 \begin{figure}[h!]
 	\centering
 	\includegraphics[height=0.9\textheight]{ConnectToPcInnerThread.pdf}
-	\caption{Схема алгоритма внутреннего потока установления RFCOMM-соединения}
+	\caption{Алгоритм внутреннего потока установления RFCOMM-соединения}
 	\label{fig:connect-to-pc-thread}
 \end{figure}
 \clearpage
 
 
-Обработка движения пальца по сенсорной области реализована в функции \lstinline|handleTouch|, которая по событию \lstinline|ACTION_DOWN| запоминает исходные координаты и сбрасывает флаг первого движения, а по событиям \lstinline|ACTION_MOVE| вычисляет относительные смещения по осям, обновляет координаты последнего касания и в критической секции увеличивает накопленные значения \lstinline|pendingDx| и \lstinline|pendingDy|. Эта логика отражена на рис.~\ref{fig:handle-touch}. Накопленные таким образом смещения затем периодически считываются фоновым потоком, изображённым на рис.~\ref{fig:sendpacket-thread}, и передаются в драйвер.
+Обработка перемещения пальца по сенсорной области реализована в функции \lstinline|handleTouch|, которая по событию \lstinline|ACTION_DOWN| запоминает исходные координаты и сбрасывает флаг первого движения, а по событиям \lstinline|ACTION_MOVE| вычисляет относительные смещения по осям, обновляет координаты последнего касания и в критической секции увеличивает накопленные значения \lstinline|pendingDx| и \lstinline|pendingDy|. Эта логика отражена на рис.~\ref{fig:handle-touch}. Накопленные таким образом смещения затем периодически считываются фоновым потоком, изображённым на рис.~\ref{fig:sendpacket-thread}, и передаются в модуль ядра.
 
 \begin{figure}[h!]
 	\centering
 	\includegraphics[width=0.9\textwidth]{HandleTouch.pdf}
-	\caption{Схема алгоритма обработки касаний на области touchpad \lstinline|handleTouch|}
+	\caption{Алгоритм обработки касаний на области touchpad \lstinline|handleTouch|}
 	\label{fig:handle-touch}
 \end{figure}
 \clearpage
+
+\subsection{Структура ПО}
 
 Структура программного обеспечения изображена на рисунке~\ref{fig:arch}
 
 \begin{figure}[h!]
 	\centering
 	\includegraphics[width=0.9\textwidth]{arch.drawio.png}
-	\caption{Схема структуры ПО}
+	\caption{Структура ПО}
 	\label{fig:arch}
 \end{figure}
 \clearpage

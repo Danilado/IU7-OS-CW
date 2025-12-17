@@ -1,0 +1,18 @@
+\subsection{Минимальные структуры и точки входа модуля}
+
+Загружаемый модуль ядра использует следующие точки входа~\cite{linux-driver-basics}:
+\begin{itemize}
+	\item функцию инициализации, регистрируемую через макрос \lstinline|module_init| (объявлен в \texttt{<linux/init.h>}), выполняющую создание виртуального устройства ввода, настройку RFCOMM-сокета и запуск служебного потока;
+	\item функцию завершения, регистрируемую через макрос \lstinline|module_exit| из \texttt{<linux/init.h>}, выполняющую остановку служебного потока, закрытие RFCOMM-сокета и снятие виртуального устройства с регистрации в подсистеме ввода;
+	\item функцию служебного потока обработки соединения, создаваемого с помощью \lstinline|kthread_run| (объявлена в \texttt{<linux/kthread.h>}) и выполняющего цикл приёма команд по RFCOMM и генерацию событий ввода~\cite{linux-kthread-man}.
+\end{itemize}
+
+Для интеграции с подсистемой ввода используется структура \lstinline|struct input_dev|, в которой настраиваются:
+\begin{itemize}
+	\item поддерживаемые типы событий \lstinline|EV_REL| и \lstinline|EV_KEY|;
+	\item коды событий \lstinline|REL_X|, \lstinline|REL_Y|, \lstinline|BTN_LEFT|, \lstinline|BTN_RIGHT|;
+	\item идентификаторы производителя, продукта и человекочитаемое имя устройства~\cite{linux-input-docs,input-programming}.
+\end{itemize}
+Генерация событий выполняется вызовами \lstinline|input_report_rel|, \lstinline|input_report_key| и \lstinline|input_sync| для зарегистрированного устройства~\cite{linux-input-docs}.
+
+Для взаимодействия с RFCOMM создаётся серверный Bluetooth-сокет с семейством \lstinline|PF_BLUETOOTH| и протоколом \lstinline|BTPROTO_RFCOMM|. Адрес сокета задаётся структурой адреса с полями семейства адресов, Bluetooth-адреса устройства и номера RFCOMM-канала, после чего выполняются операции привязки и перевода сокета в режим прослушивания~\cite{bluetooth-core-spec,kernel-net-kapi,linux-rfcomm-core}.

@@ -3,9 +3,9 @@
 \subsection{Выбор языка и среды программирования}
 
 Загружаемый модуль ядра реализован на языке программирования C. 
-Ядро Linux и большинство драйверов и загружаемых модулей традиционно реализуются на C, а интерфейсы ядровых API, включая подсистему ввода, работу с сокетами и потоками, определяются в терминах C-структур и функций~\cite{c-lang-docs,linux-driver-basics,linux-input-docs}. 
+Ядро Linux и большинство загружаемых модулей традиционно реализуются на C, а интерфейсы ядровых API, включая подсистему ввода, работу с сокетами и потоками, определяются в терминах C-структур и функций~\cite{c-lang-docs,linux-driver-basics,linux-input-docs}. 
 Язык C предоставляет контроль над управлением памятью, представлением структур данных и взаимодействием с заголовочными файлами ядра, а также поддерживается стандартным инструментарием сборки модулей ядра на основе подсистемы Kbuild~\cite{linux-driver-basics}.
-Таким образом, язык программирования C является достаточным для реализации драйвера.
+Таким образом, язык программирования C является достаточным для реализации модуля.
 
 Сборка модуля ядра выполняется с использованием стандартной инфраструктуры сборки ядра Linux и утилиты \texttt{make}. Для интеграции с подсистемой Kbuild используется конфигурационный файл \texttt{Makefile}, в котором описаны цели сборки, имя модуля и перечень исходных файлов~\cite{linux-driver-basics}.
 
@@ -14,67 +14,18 @@
 Совместимость с Java-API позволяет использовать классы \lstinline|BluetoothAdapter|, \lstinline|BluetoothDevice| и \lstinline|BluetoothSocket| непосредственно из Kotlin-кода~\cite{android-bt-connect,BluetoothSocket-doc}.
 Таким образом, Kotlin обладает достаточными возможностями для реализации клиентского приложения, а также поддержания связи с модулем ядра на целевом устройстве.
 
-% Выбор C для модуля ядра и Kotlin для мобильного приложения обеспечивает использование низкоуровневых интерфейсов ядра Linux на стороне драйвера и высокоуровневого SDK на стороне Android-приложения, что соответствует постановке задачи по разработке загружаемого модуля и сопряжённого клиента~\cite{linux-driver-basics,android-bt-connect}.
+% Выбор C для модуля ядра и Kotlin для мобильного приложения обеспечивает использование низкоуровневых интерфейсов ядра Linux на стороне модуля и высокоуровневого SDK на стороне Android-приложения, что соответствует постановке задачи по разработке загружаемого модуля и сопряжённого клиента~\cite{linux-driver-basics,android-bt-connect}.
 
 \subsection{Реализация загружаемого модуля ядра Linux}
 
-\subsubsection*{Структуры данных и состояние драйвера}
+\
 
-Загружаемый модуль ядра хранит состояние виртуального устройства мыши и параметры протокола обмена в собственных структурах данных. Основой для интеграции с подсистемой ввода является структура \lstinline|struct input_dev| (представлена в листинге~\ref{lst:input_dev}), которая содержит идентификаторы устройства, указатели на функции обратного вызова и описания поддерживаемых типов и кодов событий~\cite{linux-input-docs,input-programming}. Дополнительно используются структуры для хранения текущих состояний кнопок и параметров RFCOMM-соединения.
-Фрагмент объявления структур данных драйвера приведён в листинге~\ref{lst:definitions}.
+\textit{Структуры данных модуля}
 
-\begin{lstlisting}[language=C,caption={Структура \texttt{input\_dev}},label={lst:input_dev}]
-	struct input_dev {
-		const char * name;
-		const char * phys;
-		const char * uniq;
-		struct input_id id;
-		unsigned long propbit;
-		unsigned long evbit;
-		unsigned long keybit;
-		unsigned long relbit;
-		unsigned long absbit;
-		unsigned long mscbit;
-		unsigned long ledbit;
-		unsigned long sndbit;
-		unsigned long ffbit;
-		unsigned long swbit;
-		unsigned int hint_events_per_packet;
-		unsigned int keycodemax;
-		unsigned int keycodesize;
-		void * keycode;
-		int (* setkeycode) (struct input_dev *dev,const struct input_keymap_entry *ke, unsigned int *old_keycode);
-		int (* getkeycode) (struct input_dev *dev, struct input_keymap_entry *ke);
-		struct ff_device * ff;
-		unsigned int repeat_key;
-		struct timer_list timer;
-		int rep;
-		struct input_mt * mt;
-		struct input_absinfo * absinfo;
-		unsigned long key;
-		unsigned long led;
-		unsigned long snd;
-		unsigned long sw;
-		int (* open) (struct input_dev *dev);
-		void (* close) (struct input_dev *dev);
-		int (* flush) (struct input_dev *dev, struct file *file);
-		int (* event) (struct input_dev *dev, unsigned int type, unsigned int code, int value);
-		struct input_handle __rcu * grab;
-		spinlock_t event_lock;
-		struct mutex mutex;
-		unsigned int users;
-		bool going_away;
-		struct device dev;
-		struct list_head h_list;
-		struct list_head node;
-		unsigned int num_vals;
-		unsigned int max_vals;
-		struct input_value * vals;
-		bool devres_managed;
-	};
-\end{lstlisting}
+Загружаемый модуль ядра хранит состояние виртуального устройства мыши и параметры протокола обмена в собственных структурах данных. Основой для интеграции с подсистемой ввода является структура \lstinline|struct input_dev|, содержащая идентификаторы устройства, указатели на функции обратного вызова и описания поддерживаемых типов и кодов событий~\cite{linux-input-docs,input-programming}. Дополнительно используются структуры для хранения текущих состояний кнопок и параметров RFCOMM-соединения.
+Фрагмент объявления структур данных модуля приведён в листинге~\ref{lst:definitions}.
 
-\begin{lstlisting}[language=C,caption={Фрагмент объявления структур данных драйвера \texttt{phone\_mouse\_bt}},label={lst:definitions}]
+\begin{lstlisting}[language=C,caption={Фрагмент объявления структур данных модуля \texttt{phone\_mouse\_bt}},label={lst:definitions}]
 	/* Виртуальное устройство мыши в подсистеме input */
 	static struct input_dev *pm_input_dev;
 	
@@ -82,7 +33,7 @@
 	static struct socket *listen_sock;
 	static struct socket *client_sock;
 	
-	/* Служебный поток приёма пакетов от телефона */
+	/* Служебный поток приёма пакетов от смартфона */
 	static struct task_struct *rx_thread;
 	
 	/* Параметры обработки движения */
@@ -94,19 +45,21 @@
 	#define RMB_MASK 0x02
 \end{lstlisting}
 
-\subsubsection*{Точки входа модуля и функции обработки}
+\
+
+\textit{Точки входа модуля и функции обработки}
 
 Точки входа загружаемого модуля определяются функциями инициализации и завершения, регистрируемыми макросами \lstinline|module_init| и \lstinline|module_exit|~\cite{linux-driver-basics}. В функции инициализации выполняются:
 \begin{itemize}
 	\item создание и настройка объекта \lstinline|struct input_dev| и регистрация виртуального устройства мыши в подсистеме ввода;
-	\item инициализация структур данных состояния драйвера;
+	\item инициализация структур данных состояния модуля;
 	\item создание серверного RFCOMM-сокета и его привязка к выбранному каналу;
 	\item запуск служебного потока ядра с помощью \lstinline|kthread_run| для обработки соединения и входящих команд~\cite{linux-kthread-man,linux-rfcomm-core}.
 \end{itemize}
 
 Функция завершения выполняет остановку служебного потока, закрытие RFCOMM-сокета, снятие виртуального устройства с регистрации и освобождение всех выделенных ресурсов~\cite{linux-driver-basics}.
 
-Функции инициализации и завершения драйвера модуля приведены в листингах~\ref{lst:init}~и~\ref{lst:exit} соответственно.
+Функции инициализации и завершения модуля приведены в листингах~\ref{lst:init}~и~\ref{lst:exit} соответственно.
 
 \begin{lstlisting}[language=C,caption={Функция инициализации модуля},label={lst:init}]
 	static int __init pm_init(void) {
@@ -300,7 +253,9 @@
 	}
 \end{lstlisting}
 
-\subsubsection*{Сборка модуля ядра}
+\
+
+\textit{Сборка модуля ядра}
 
 Сборка модуля ядра выполняется внешней по отношению к дереву исходных текстов ядра командой \texttt{make} с использованием файла \texttt{Makefile}, описывающего цель сборки и исходные файлы. В \texttt{Makefile} используются переменные и правила Kbuild, что позволяет компилировать модуль в соответствии с конфигурацией ядра и подключать необходимые заголовочные файлы~\cite{linux-driver-basics}.
 
@@ -321,7 +276,9 @@
 
 \subsection{Реализация мобильного приложения для Android}
 
-\subsubsection*{Основные компоненты приложения}
+\
+
+\textit{Основные компоненты приложения}
 
 Мобильное приложение реализовано в виде Android-приложения с основной активностью, отвечающей за инициализацию пользовательского интерфейса, установление Bluetooth-соединения и обработку входных событий. Логика обработки касаний и генерации команд размещается в коде активности и связанных с ней обработчиков событий, а обмен данными по Bluetooth --- в отдельном компоненте, использующем объект \lstinline|BluetoothSocket|~\cite{android-bt-connect,BluetoothSocket-doc}.
 
@@ -419,8 +376,9 @@
 	}
 \end{lstlisting}
 
+\
 
-\subsubsection*{Работа с Bluetooth-API Android}
+\textit{Работа с Bluetooth-API Android}
 
 Для установления RFCOMM-соединения приложение использует \lstinline|BluetoothAdapter| для доступа к локальному Bluetooth-модулю, \lstinline|BluetoothDevice| для представления удалённого устройства рабочей станции и \lstinline|BluetoothSocket| для установления и использования сокетного соединения~\cite{android-bt-connect,BluetoothSocket-doc}. Соединение создаётся методом \lstinline|createRfcommSocketToServiceRecord| с использованием согласованного UUID сервиса, после чего приложение выполняет операцию подключения и получает потоки ввода-вывода для обмена бинарными сообщениями.
 
@@ -445,7 +403,7 @@ private fun connectToPc(mac: String) {
 		// Подключение к ПК во внутреннем потоке
 		thread {
 			try {
-				// RFCOMM channel 1 (драйвер слушает на этом канале)
+				// RFCOMM channel 1 (модуль слушает на этом канале)
 				val method = device.javaClass.getMethod(
 				"createRfcommSocket",
 				Int::class.javaPrimitiveType
@@ -489,7 +447,9 @@ private fun connectToPc(mac: String) {
 
 Код обработки сенсорных событий в пользовательском интерфейсе преобразует координаты касаний и состояния элементов управления в смещения по осям и битовую маску состояний кнопок мыши, после чего упаковывает их в бинарный формат протокола и передаёт через \lstinline|BluetoothSocket| в модуль ядра~\cite{android-bt-connect,BluetoothSocket-doc}.
 
-\subsubsection*{Конфигурация проекта и разрешения}
+\
+
+\textit{Конфигурация приложения и разрешения}
 
 Конфигурация Android-приложения включает файл \texttt{AndroidManifest.xml}, в котором описываются разрешения на использование Bluetooth и, при необходимости, дополнительные особенности аппаратной платформы. В манифесте объявляется основная активность приложения и настраиваются параметры, связанные с версией SDK и требованиями к окружению~\cite{android-bt-connect}.
 
